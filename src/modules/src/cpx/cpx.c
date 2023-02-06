@@ -43,9 +43,12 @@
 #ifdef CONFIG_DECK_AI
 #include "aideck.h"
 #endif
+#include "param.h"
 #include "cpx.h"
 
 static CPXPacket_t cpxRx;
+static CRTPPacket image_crtp_packet;
+static uint8_t transmit_images = 0;
 
 #define WIFI_SET_SSID_CMD         0x10
 #define WIFI_SET_KEY_CMD          0x11
@@ -65,6 +68,22 @@ void cpxInitRoute(const CPXTarget_t source, const CPXTarget_t destination, const
     route->source = source;
     route->destination = destination;
     route->function = function;
+}
+
+void send_buffer_via_crtp(uint8_t* buffer, uint32_t buffer_size)
+{
+    uint32_t offset = 0;
+    uint32_t size = 0;
+    do {
+        size = sizeof(image_crtp_packet.data);
+        if (offset + size > buffer_size) {
+            size = buffer_size - offset;
+        }
+        memcpy(image_crtp_packet.data, &buffer[offset], size);
+        image_crtp_packet.size = size;
+        crtpSendPacketBlock(&image_crtp_packet);
+        offset += size;
+    } while (size == sizeof(image_crtp_packet.data));
 }
 
 static void cpx(void* _param) {
@@ -91,6 +110,16 @@ static void cpx(void* _param) {
             cpxLinkSetConnected(true);
             DEBUG_PRINT("CPX connected\n");
           }
+        }
+        break;
+      case CPX_F_APP:
+        if (cpxRx.route.source == CPX_T_GAP8) {
+          image_crtp_packet.size = 0;
+          image_crtp_packet.header = CRTP_HEADER(CRTP_PORT_IMAGE, 0);
+          if (transmit_images)
+            send_buffer_via_crtp(cpxRx.data, cpxRx.dataLength);
+        } else {
+          DEBUG_PRINT("UNKNOWN: Unidentified CPX_F_APP packet received!");
         }
         break;
       case CPX_F_CONSOLE:
@@ -135,3 +164,7 @@ static void cpx(void* _param) {
 void cpxInit() {
   xTaskCreate(cpx, CPX_TASK_NAME, AI_DECK_TASK_STACKSIZE, NULL, AI_DECK_TASK_PRI, NULL);
 }
+
+PARAM_GROUP_START(imgtrans)
+PARAM_ADD(PARAM_UINT8, transmit, &transmit_images)
+PARAM_GROUP_STOP(imgtrans)
